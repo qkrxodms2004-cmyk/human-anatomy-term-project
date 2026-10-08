@@ -6,17 +6,17 @@ Python + Pygame으로 실행하는 대문자 기억·판단 과제입니다. 안
 
 ## 설치와 실행
 
-Python 3.10 이상, 화면과 오디오 출력 장치, 한글 글꼴이 필요합니다. Windows에서는 기본 맑은 고딕을 사용합니다. Linux에서는 Noto Sans CJK/Nanum Gothic을 설치하거나 `font_file`에 한글 TTF/OTF 파일 경로를 지정하세요.
+Windows에서는 **x64용 Python 3.11(64비트)**, 화면과 오디오 출력 장치가 필요합니다. NumPy와 Pygame은 `vendor` 폴더에 동봉되어 **pip 설치 없이** 실행합니다. 기본 맑은 고딕을 사용합니다. 다른 Python 버전이나 ARM64/32비트 Windows에는 이 바이너리가 호환되지 않습니다.
 
-Windows 명령 프롬프트:
+GitHub의 Code → Download ZIP으로 프로젝트 전체를 받고 압축을 풀어 주세요. `vendor` 폴더를 함께 유지해야 합니다. `run_windows.bat`를 더블클릭하거나 Windows 명령 프롬프트에서 실행하세요:
 
 ```bat
-python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python sternberg.py
+py -3.11 sternberg.py
 ```
 
-Linux/macOS:
+Python Launcher(`py`)가 없다면 Python 3.11 64비트의 `python sternberg.py`를 사용하세요. 가상환경을 만들거나 패키지를 설치할 필요가 없습니다. `vendor` 파일은 실행 중 네트워크 접속 없이 읽습니다.
+
+Linux/macOS의 기존 개발 방식은 유지합니다. Python 3.10 이상과 한글 글꼴(Noto Sans CJK/Nanum Gothic 또는 `font_file`로 지정한 TTF/OTF)이 필요합니다:
 
 ```sh
 python3 -m venv .venv
@@ -100,6 +100,8 @@ FGHIJ,Z
 T/F는 포함 여부를 뜻하고 `correct`는 피험자의 답이 정답과 일치하는지를 뜻합니다. 무응답은 response/반응시간을 빈칸, timeout=True, correct=False로 저장합니다. 중단된 시행은 status로 식별하며 아직 측정하지 않은 값은 빈칸입니다. 단계 시각은 세션 시작 기준 `perf_counter` 초입니다. 반응시간은 화면 flip 직후부터 입력 처리까지 측정합니다. 기록은 소프트웨어 시각으로, 실제 모니터·소리 출력 지연을 측정하지 않습니다. 소음의 실제 단계 길이는 응답 속도와 프레임 주기에 따라 달라집니다.
 
 ## 개발 검증
+
+Windows에서는 패키지 설치 없이 `py -3.11 -m unittest -v`로 검증할 수 있습니다. 아래 명령은 기존 Linux/macOS 개발 환경용입니다.
 
 ```sh
 .venv/bin/python -m unittest -v

@@ -1,0 +1,20 @@
+{
+  "platform": "Windows x86-64",
+  "python": "CPython 3.11",
+  "sources": [
+    {
+      "package": "numpy",
+      "version": "2.2.6",
+      "wheel": "numpy-2.2.6-cp311-cp311-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/31/0a/f354fb7176b81747d870f7991dc763e157a934c717b67b58456bc63da3df/numpy-2.2.6-cp311-cp311-win_amd64.whl",
+      "sha256": "e8213002e427c69c45a52bbd94163084025f533a55a59d6f9c5b820774ef3303"
+    },
+    {
+      "package": "pygame",
+      "version": "2.6.1",
+      "wheel": "pygame-2.6.1-cp311-cp311-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/d2/55/ca3eb851aeef4f6f2e98a360c201f0d00bd1ba2eb98e2c7850d80aabc526/pygame-2.6.1-cp311-cp311-win_amd64.whl",
+      "sha256": "91476902426facd4bb0dad4dc3b2573bc82c95c71b135e0daaea072ed528d299"
+    }
+  ]
+}

@@ -16,6 +16,9 @@ import statistics
 import string
 import time
 
+from vendor_loader import configure_vendor
+
+configure_vendor()
 import numpy as np
 
 STAGES = ("set", "delay", "probe")

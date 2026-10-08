@@ -5,6 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from vendor_loader import configure_vendor
+
+configure_vendor()
 import numpy as np
 from sternberg import Settings, filtered_noise, load_settings, make_stimuli, noise_conditions, read_stimuli, validate_settings, validate_participant
 
