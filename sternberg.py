@@ -195,6 +195,80 @@ class QuitExperiment(Exception):
     pass
 
 
+def validate_participant(value: str) -> str:
+    value = value.strip()
+    if (not 1 <= len(value) <= 60 or not any(x.isalnum() for x in value)
+            or any(not (x.isalnum() or x in "-_") for x in value)):
+        raise ValueError("ID는 문자·숫자·-·_로 1~60자 입력하세요. 문자 또는 숫자가 필요합니다.")
+    return value
+
+
+def setup_display(p, c):
+    p.display.init()
+    p.font.init()
+    screen = p.display.set_mode((c.width, c.height), p.FULLSCREEN if c.fullscreen else 0)
+    p.display.set_caption("Sternberg 기억 실험")
+    fonts = ["malgungothic", "applesdgothicneo", "nanumgothic", "notosanscjkkr", "notosanscjksc"]
+    font_path = c.font_file or next((p.font.match_font(x) for x in fonts if p.font.match_font(x)), None)
+    if not font_path:
+        raise RuntimeError("한글 글꼴이 없습니다. config.ini의 font_file에 한글 TTF/OTF 경로를 지정하세요.")
+    return screen, font_path
+
+
+def prompt_participant(c: Settings) -> str | None:
+    """Collect an ID before creating any session or initializing experiment audio."""
+    import pygame as p
+    try:
+        screen, font_path = setup_display(p, c)
+        font = p.font.Font(font_path, 28)
+        clock = p.time.Clock()
+        value, composition, error = "", "", ""
+        p.key.start_text_input()
+        box = p.Rect(50, 220, screen.get_width() - 100, 65)
+        p.key.set_text_input_rect(box)
+        while True:
+            screen.fill((18, 22, 30))
+            lines = [("피험자 ID를 입력하세요", 65),
+                     ("실명 대신 익명 ID를 사용하세요. 예: P001", 120),
+                     ("문자·숫자·-·_ 사용 / 최대 60자", 165),
+                     ("Enter: 확인 및 시작   |   Backspace: 삭제   |   ESC: 종료", 340),
+                     (error, 400)]
+            for line, y in lines:
+                rendered = font.render(line, True, (255, 170, 170) if y == 400 else (235, 235, 235))
+                if rendered.get_width() > screen.get_width() - 40:
+                    size = max(12, int(28 * (screen.get_width() - 40) / rendered.get_width()))
+                    rendered = p.font.Font(font_path, size).render(line, True, (235, 235, 235))
+                screen.blit(rendered, ((screen.get_width() - rendered.get_width()) // 2, y))
+            p.draw.rect(screen, (55, 70, 95), box)
+            p.draw.rect(screen, (255, 220, 110), box, 2)
+            text = value + composition + "|"
+            size = min(28, max(10, int(28 * (box.width - 24) / max(1, font.size(text)[0]))))
+            rendered = p.font.Font(font_path, size).render(text, True, (255, 220, 110))
+            screen.blit(rendered, (box.x + 12, box.y + (box.height - rendered.get_height()) // 2))
+            p.display.flip()
+            for event in p.event.get():
+                if event.type == p.QUIT or (event.type == p.KEYDOWN and event.key == p.K_ESCAPE):
+                    return None
+                if event.type == p.TEXTINPUT:
+                    value += event.text
+                    composition, error = "", ""
+                elif event.type == p.TEXTEDITING:
+                    composition = event.text
+                elif event.type == p.KEYDOWN and not composition:
+                    if event.key == p.K_BACKSPACE:
+                        value, error = value[:-1], ""
+                    elif event.key in (p.K_RETURN, p.K_KP_ENTER):
+                        try:
+                            return validate_participant(value)
+                        except ValueError as exc:
+                            error = str(exc)
+            clock.tick(60)
+    finally:
+        if p.display.get_init():
+            p.key.stop_text_input()
+        p.quit()
+
+
 class Experiment:
     def __init__(self, c: Settings, participant: str, smoke: bool = False):
         import pygame
@@ -212,9 +286,7 @@ class Experiment:
         for trial, condition in zip(self.main, noise_conditions(c.trials_per_condition, rng)):
             trial.update(condition)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
-        safe = "".join(x for x in participant if x.isalnum() or x in "-_")[:60]
-        if not safe:
-            raise ValueError("피험자 ID에 문자 또는 숫자가 필요합니다.")
+        safe = validate_participant(participant)
         self.folder = Path(c.output_dir) / (f"SMOKE_{safe}_{stamp}" if smoke else f"{safe}_{stamp}")
         self.folder.mkdir(parents=True, exist_ok=False)
         self.metadata = {"participant": safe, "started_utc": stamp, "settings": asdict(c),
@@ -248,13 +320,8 @@ class Experiment:
         p.init()
         if not p.mixer.get_init():
             raise RuntimeError("오디오 장치를 초기화하지 못했습니다. 소음 실험은 오디오가 필요합니다.")
-        self.screen = p.display.set_mode((c.width, c.height), p.FULLSCREEN if c.fullscreen else 0)
-        p.display.set_caption("Sternberg 기억 실험")
+        self.screen, font_path = setup_display(p, c)
         p.key.set_repeat()
-        fonts = ["malgungothic", "applesdgothicneo", "nanumgothic", "notosanscjkkr", "notosanscjksc"]
-        font_path = c.font_file or next((p.font.match_font(x) for x in fonts if p.font.match_font(x)), None)
-        if not font_path:
-            raise RuntimeError("한글 글꼴이 없습니다. config.ini의 font_file에 한글 TTF/OTF 경로를 지정하세요.")
         self.font = p.font.Font(font_path, 28)
         self.big_font = p.font.Font(font_path, 64)
         self.font_path = font_path
@@ -438,7 +505,7 @@ class Experiment:
 def main():
     parser = argparse.ArgumentParser(description="Sternberg 기억 실험")
     parser.add_argument("--config", type=Path, default=Path(__file__).with_name("config.ini"))
-    parser.add_argument("--participant", default="anonymous", help="이름 대신 익명 피험자 ID 권장")
+    parser.add_argument("--participant", help="지정하면 시작 화면의 ID 입력을 생략합니다")
     parser.add_argument("--smoke-test", action="store_true", help="개발 검증용 자동 응답; 피험자 데이터가 아님")
     args = parser.parse_args()
     cfg = load_settings(args.config.resolve())
@@ -448,7 +515,11 @@ def main():
         for name in ("memorize_seconds", "delay_seconds", "response_timeout_seconds", "break_seconds",
                      "post_calibration_wait_seconds", "intertrial_seconds"):
             setattr(cfg, name, .08)
-    Experiment(cfg, args.participant, args.smoke_test).run()
+    participant = args.participant
+    if participant is None:
+        participant = "CHECK" if args.smoke_test else prompt_participant(cfg)
+    if participant is not None:
+        Experiment(cfg, participant, args.smoke_test).run()
 
 
 if __name__ == "__main__":

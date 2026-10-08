@@ -6,10 +6,17 @@ import unittest
 from pathlib import Path
 
 import numpy as np
-from sternberg import Settings, filtered_noise, load_settings, make_stimuli, noise_conditions, read_stimuli, validate_settings
+from sternberg import Settings, filtered_noise, load_settings, make_stimuli, noise_conditions, read_stimuli, validate_settings, validate_participant
 
 
 class TaskTests(unittest.TestCase):
+    def test_participant_id_validation(self):
+        self.assertEqual(validate_participant(' P001-2_A '), 'P001-2_A')
+        self.assertEqual(validate_participant('피험자01'), '피험자01')
+        for value in ('', ' ', '../P001', 'P/001', 'P 001', 'P:001', '---', 'P' * 61):
+            with self.assertRaises(ValueError):
+                validate_participant(value)
+
     def test_generated_sets_and_balanced_answers(self):
         rows = make_stimuli(24, 5, random.Random(42))
         self.assertEqual(sum(r['probe'] in r['set'] for r in rows), 12)

@@ -11,7 +11,7 @@ Windows 명령 프롬프트:
 ```bat
 python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python sternberg.py --participant P001
+.venv\Scripts\python sternberg.py
 ```
 
 Linux/macOS:
@@ -19,10 +19,14 @@ Linux/macOS:
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python sternberg.py --participant P001
+.venv/bin/python sternberg.py
 ```
 
 안내 화면에서는 스페이스로 진행합니다. probe가 나타난 뒤 **왼쪽 방향키 = T(있음), 오른쪽 방향키 = F(없음)**를 누릅니다. 최초 유효 응답 하나만 처리하며, 응답 전 단계의 키 입력과 길게 누른 키의 자동 반복은 무시합니다. ESC 또는 창 닫기는 중단하고 그때까지의 결과와 진행 중 시행을 저장합니다.
+
+실행하면 먼저 피험자 ID 입력 화면이 나타납니다. ID를 입력하고 **Enter**를 누르면 실험 안내가 시작됩니다. **Backspace**로 삭제하고 **ESC** 또는 창 닫기로 취소할 수 있습니다. 빈 ID나 허용하지 않는 문자가 있으면 안내를 표시하고 다시 입력받습니다. ID는 문자·숫자·하이픈·밑줄로 1~60자이며 문자나 숫자가 최소 하나 필요합니다. 확인한 ID는 결과 폴더 이름과 `session.json`의 `participant`에 저장됩니다. ID 입력을 취소하면 결과 폴더를 생성하지 않습니다.
+
+명령행에서 `.venv/bin/python sternberg.py --participant P001`처럼 지정하면 입력 화면을 생략할 수 있습니다. 검증용 `--smoke-test`도 입력 없이 진행합니다.
 
 ## 메모장 설정
 

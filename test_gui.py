@@ -6,16 +6,68 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
 os.environ.setdefault('SDL_AUDIODRIVER', 'dummy')
 os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
 
-from sternberg import Experiment, QuitExperiment, Settings
+from sternberg import Experiment, QuitExperiment, Settings, main, prompt_participant
 
 
 class InterfaceTests(unittest.TestCase):
+    def test_id_form_edits_and_persists_confirmed_id(self):
+        import pygame as p
+        with tempfile.TemporaryDirectory() as folder:
+            cfg = replace(Settings(), output_dir=folder)
+            events = [
+                p.event.Event(p.KEYDOWN, key=p.K_RETURN),  # empty must not confirm
+                p.event.Event(p.TEXTINPUT, text='/'),
+                p.event.Event(p.KEYDOWN, key=p.K_RETURN),  # invalid must not confirm
+                p.event.Event(p.KEYDOWN, key=p.K_BACKSPACE),
+                p.event.Event(p.TEXTEDITING, text='P', start=0, length=1),
+                p.event.Event(p.KEYDOWN, key=p.K_RETURN),  # composing must not confirm
+                p.event.Event(p.TEXTINPUT, text='P001X'),
+                p.event.Event(p.KEYDOWN, key=p.K_BACKSPACE),
+                p.event.Event(p.KEYDOWN, key=p.K_RETURN),
+            ]
+            with patch('pygame.event.get', side_effect=[events]):
+                participant = prompt_participant(cfg)
+            self.assertEqual(participant, 'P001')
+            self.assertFalse(any(Path(folder).iterdir()))
+            task = Experiment(cfg, participant)
+            try:
+                self.assertEqual(task.metadata['participant'], 'P001')
+                self.assertTrue(task.folder.name.startswith('P001_'))
+                import json
+                saved = json.loads((task.folder / 'session.json').read_text())
+                self.assertEqual(saved['participant'], 'P001')
+            finally:
+                task.result_file.close()
+                p.quit()
+
+    def test_id_form_cancel_exits_before_creating_experiment(self):
+        import pygame as p
+        for event in (p.event.Event(p.KEYDOWN, key=p.K_ESCAPE), p.event.Event(p.QUIT)):
+            with tempfile.TemporaryDirectory() as folder:
+                cfg = replace(Settings(), output_dir=folder)
+                with patch('sys.argv', ['sternberg.py']), patch('sternberg.load_settings', return_value=cfg), \
+                     patch('pygame.event.get', side_effect=[[event]]), patch('sternberg.Experiment') as experiment:
+                    main()
+                experiment.assert_not_called()
+                self.assertFalse(any(Path(folder).iterdir()))
+
+    def test_main_uses_start_screen_id_or_command_line_override(self):
+        for args, expected, should_prompt in (([], 'P007', True), (['--participant', 'P008'], 'P008', False)):
+            with patch('sys.argv', ['sternberg.py'] + args), \
+                 patch('sternberg.prompt_participant', return_value='P007') as prompt, \
+                 patch('sternberg.Experiment') as experiment:
+                main()
+            experiment.assert_called_once()
+            self.assertEqual(experiment.call_args.args[1], expected)
+            experiment.return_value.run.assert_called_once()
+            self.assertEqual(prompt.called, should_prompt)
+
     def test_keys_timeout_and_noise_stage_recording(self):
         with tempfile.TemporaryDirectory() as folder:
             cfg = replace(Settings(), output_dir=folder, seed=42, memorize_seconds=.02,
