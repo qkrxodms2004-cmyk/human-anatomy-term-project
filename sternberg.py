@@ -1,4 +1,4 @@
-"""Sternberg memory task. Run: python sternberg.py --participant P001."""
+"""Sternberg 기억 과제. 실행: python sternberg.py."""
 from __future__ import annotations
 
 import argparse
@@ -84,7 +84,7 @@ def load_settings(path: Path) -> Settings:
                 setattr(cfg, name, parser.getint(section, name))
             else:
                 setattr(cfg, name, parser.getfloat(section, name))
-    # Resolve paths relative to the configuration, not the current directory.
+    # 경로는 현재 작업 폴더가 아닌 설정 파일의 위치를 기준으로 해석합니다.
     for name in ("stimuli_file", "output_dir", "font_file"):
         value = getattr(cfg, name)
         if value:
@@ -161,7 +161,7 @@ def noise_conditions(repetitions: int, rng: random.Random) -> list[dict]:
 def filtered_noise(c: Settings, kind: str, seed: int) -> np.ndarray:
     if kind not in ("low", "high"):
         raise ValueError("소음 필터는 low 또는 high여야 합니다.")
-    # A long reusable buffer avoids generating audio inside timed trial stages.
+    # 측정 중 소음을 생성하지 않도록 재사용할 긴 버퍼를 미리 준비합니다.
     duration = max(c.memorize_seconds, c.delay_seconds, c.response_timeout_seconds) + .1
     if duration > 600:
         raise ValueError("소음 단계별 최대 시간은 600초입니다.")
@@ -207,7 +207,7 @@ def setup_display(p, c):
     p.display.init()
     p.font.init()
     screen = p.display.set_mode((c.width, c.height), p.FULLSCREEN if c.fullscreen else 0)
-    p.display.set_caption("Sternberg 기억 실험")
+    p.display.set_caption("Sternberg Memory Test")
     fonts = ["malgungothic", "applesdgothicneo", "nanumgothic", "notosanscjkkr", "notosanscjksc"]
     font_path = c.font_file or next((p.font.match_font(x) for x in fonts if p.font.match_font(x)), None)
     if not font_path:
@@ -216,7 +216,7 @@ def setup_display(p, c):
 
 
 def prompt_participant(c: Settings) -> str | None:
-    """Collect an ID before creating any session or initializing experiment audio."""
+    """결과 파일 생성이나 실험 오디오 초기화 전에 피험자 ID를 입력받습니다."""
     import pygame as p
     try:
         screen, font_path = setup_display(p, c)
@@ -228,10 +228,10 @@ def prompt_participant(c: Settings) -> str | None:
         p.key.set_text_input_rect(box)
         while True:
             screen.fill((18, 22, 30))
-            lines = [("피험자 ID를 입력하세요", 65),
-                     ("실명 대신 익명 ID를 사용하세요. 예: P001", 120),
-                     ("문자·숫자·-·_ 사용 / 최대 60자", 165),
-                     ("Enter: 확인 및 시작   |   Backspace: 삭제   |   ESC: 종료", 340),
+            lines = [("Enter your participant ID", 65),
+                     ("Use an anonymous ID, not your real name. Example: P001", 120),
+                     ("Use letters, numbers, - or _. Maximum: 60 characters.", 165),
+                     ("Enter: Start   |   Backspace: Delete   |   ESC: Exit", 340),
                      (error, 400)]
             for line, y in lines:
                 rendered = font.render(line, True, (255, 170, 170) if y == 400 else (235, 235, 235))
@@ -260,8 +260,8 @@ def prompt_participant(c: Settings) -> str | None:
                     elif event.key in (p.K_RETURN, p.K_KP_ENTER):
                         try:
                             return validate_participant(value)
-                        except ValueError as exc:
-                            error = str(exc)
+                        except ValueError:
+                            error = "Enter 1-60 characters using letters, numbers, - or _, including a letter or number."
             clock.tick(60)
     finally:
         if p.display.get_init():
@@ -292,7 +292,7 @@ class Experiment:
         self.metadata = {"participant": safe, "started_utc": stamp, "settings": asdict(c),
                          "main_trial_count": c.trials,
                          "smoke_test": smoke, "status": "initializing", "audio_hashes": {}, "waits": [],
-                         "timing_note": "perf_counter times relative to session start; flip / audio command timestamps, not measured physical onsets"}
+                         "timing_note": "세션 시작 기준 perf_counter 시각. 화면 flip 및 오디오 명령 시각이며 물리적 출력 시각을 측정한 값이 아닙니다."}
         self.save_metadata()
         with (self.folder / "planned_stimuli.csv").open("w", encoding="utf-8-sig", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=["phase", "trial", "set", "probe", "noise_condition", "noise_stage", "noise_filter"])
@@ -346,7 +346,7 @@ class Experiment:
             self.screen.blit(rendered, (self.screen.get_width() // 2 - rendered.get_width() // 2, y))
             y += 45
         if large:
-            # Wrap long sets so set_size=25 remains visible on the minimum screen.
+            # 최소 화면 크기에서도 set_size=25를 표시하도록 긴 set을 줄바꿈합니다.
             chunks = [large[i:i+23] for i in range(0, len(large), 23)]
             for i, chunk in enumerate(chunks):
                 rendered = self.big_font.render(chunk, True, (255, 220, 110))
@@ -363,7 +363,7 @@ class Experiment:
 
     def message(self, lines):
         self.pg.event.clear(self.pg.KEYDOWN)
-        onset = self.draw(lines + ["스페이스를 눌러 계속하세요.  |  ESC: 종료"])
+        onset = self.draw(lines + ["Press SPACE to continue.  |  ESC: Exit"])
         while True:
             for event in self.events():
                 if event.type == self.pg.KEYDOWN and event.key == self.pg.K_SPACE:
@@ -373,11 +373,11 @@ class Experiment:
             self.clock.tick(120)
 
     def wait(self, seconds, lines, purpose="intertrial", row=None):
-        announcement = [f"{min(2, seconds):g}초 뒤 본 실험을 다시 시작합니다.",
-                        "왼쪽 ←: T (있음)     오른쪽 →: F (없음)",
-                        "자동으로 시작됩니다. 키를 누르지 말고 준비하세요."]
+        announcement = [f"The main test resumes in {min(2, seconds):g} seconds.",
+                        "Left arrow: T (present)     Right arrow: F (absent)",
+                        "The test resumes automatically. Get ready without pressing any keys."]
         show_immediately = purpose == "break" and seconds <= 2
-        onset = self.draw(announcement if show_immediately else lines + ["방향키를 누르지 말고 기다리세요."])
+        onset = self.draw(announcement if show_immediately else lines + ["Please wait without pressing any keys."])
         announcement_onset = onset if show_immediately else ""
         if row is not None:
             row["intertrial_onset_s"] = onset
@@ -406,7 +406,7 @@ class Experiment:
             row["noise_command_duration_ms"] = 1000 * (row["noise_stop_command_s"] - row["noise_play_command_s"])
 
     def stage(self, name, seconds, lines, large, row):
-        # Discard premature presses before the probe; held keys do not auto-repeat.
+        # probe 이전의 키 입력을 버리고, 누르고 있는 키의 자동 반복은 사용하지 않습니다.
         self.events()
         self.pg.event.clear(self.pg.KEYDOWN)
         onset = self.draw(lines, large)
@@ -449,15 +449,15 @@ class Experiment:
                            noise_min_hz=getattr(c, f'{row["noise_filter"]}_min_hz'),
                            noise_max_hz=getattr(c, f'{row["noise_filter"]}_max_hz'))
         self.active_row = row
-        label = {"practice": "연습", "calibration": "반응시간 보정", "main": "본 실험"}[phase]
+        label = {"practice": "Practice", "calibration": "Response time calibration", "main": "Main test"}[phase]
         header = f"{label}  {number} / {count}"
-        self.stage("set", c.memorize_seconds, [header, "아래 대문자들을 기억하세요. 아직 답하지 마세요."], " ".join(stimulus["set"]), row)
-        self.stage("delay", c.delay_seconds, [header, "알파벳을 마음속으로 기억하고 +를 바라보세요.", "아직 답하지 마세요."], "+", row)
+        self.stage("set", c.memorize_seconds, [header, "Memorize the uppercase letters below. Do not respond yet."], " ".join(stimulus["set"]), row)
+        self.stage("delay", c.delay_seconds, [header, "Keep the letters in mind and look at the + sign.", "Do not respond yet."], "+", row)
         response, rt = self.stage("probe", c.response_timeout_seconds,
-                                  [header, "이 글자가 방금 기억한 set에 있었나요?", "왼쪽 ←: T (있음)     오른쪽 →: F (없음)", "가능한 한 빠르고 정확하게 답하세요."], stimulus["probe"], row)
+                                  [header, "Was this letter in the set you just memorized?", "Left arrow: T (present)     Right arrow: F (absent)", "Respond as quickly and accurately as possible."], stimulus["probe"], row)
         row.update(response=response, response_time_ms=rt, timeout=not bool(response),
                    correct=bool(response) and response == row["expected"])
-        self.wait(c.intertrial_seconds, ["다음 시행을 기다리세요. 기억했던 알파벳은 이제 잊어도 됩니다."], row=row)
+        self.wait(c.intertrial_seconds, ["Wait for the next trial. You may now forget the previous set."], row=row)
         row["trial_end_s"] = self.now()
         row["status"] = "completed"
         row["break_after"] = phase == "main" and number == math.ceil(count / 2) and number < count
@@ -465,17 +465,17 @@ class Experiment:
         self.write_row(row)
         self.active_row = None
         if phase == "practice":
-            feedback = "정답입니다." if row["correct"] else ("시간이 초과되었습니다." if row["timeout"] else "오답입니다.")
-            self.message([feedback, f'정답: {row["expected"]}  |  {stimulus["probe"]}의 set 포함 여부를 판단하세요.'])
+            feedback = "Correct." if row["correct"] else ("Time is up." if row["timeout"] else "Incorrect.")
+            self.message([feedback, f'Correct answer: {row["expected"]}  |  Decide whether {stimulus["probe"]} was in the set.'])
         return row
 
     def run(self):
         try:
             self.setup()
-            self.message(["Sternberg 기억 실험 안내", "1. 처음 나타나는 대문자 set을 기억합니다.", "2. set이 사라지면 +를 보며 계속 기억합니다.", "3. 한 글자(probe)가 나타나면 set에 있었는지 판단합니다.", "왼쪽 ←: T (있음)     오른쪽 →: F (없음)", "응답에는 시간 제한이 있습니다. 빠르고 정확하게 답하세요.", "4. 다음 시행까지 기다립니다. 소음이 없는 시행도 있습니다.", "먼저 연습하고, 소음 없이 반응시간을 보정합니다."])
+            self.message(["Sternberg Memory Test: Instructions", "1. Memorize the set of uppercase letters shown on the screen.", "2. When the set disappears, look at + and keep the letters in mind.", "3. When a single letter (probe) appears, decide if it was in the set.", "Left arrow: T (present)     Right arrow: F (absent)", "There is a time limit. Respond as quickly and accurately as possible.", "4. Wait for the next trial. Some trials include noise; others are silent.", "First, you will practice and complete calibration without noise."])
             for i, stimulus in enumerate(self.practice, 1):
                 self.trial(stimulus, "practice", i, len(self.practice))
-            self.message(["반응시간 보정", "연습과 같은 방식으로 빠르고 정확하게 답하세요.", "정답 응답의 평균 반응시간을 계산합니다. 소음은 없습니다."])
+            self.message(["Response Time Calibration", "Follow the same task as in practice. Respond quickly and accurately.", "We will calculate your mean response time for correct answers.", "There is no noise during calibration."])
             rows = [self.trial(s, "calibration", i, len(self.calibration)) for i, s in enumerate(self.calibration, 1)]
             correct_rts = [r["response_time_ms"] for r in rows if r["correct"]]
             self.calibration_mean = statistics.mean(correct_rts) if correct_rts else ""
@@ -483,15 +483,15 @@ class Experiment:
                                  calibration_valid_responses=len(correct_rts), calibration_total=len(rows))
             self.save_metadata()
             if not correct_rts:
-                self.message(["보정에서 유효한 정답 응답이 없어 평균 반응시간을 계산하지 못했습니다.", "결과에 평균은 빈칸으로 저장됩니다. 본 실험은 계속 진행합니다."])
+                self.message(["No valid correct responses were recorded during calibration.", "Your mean response time could not be calculated.", "The mean will be left blank in the results. The main test will continue."])
             self.wait(self.cfg.post_calibration_wait_seconds,
-                      ["반응시간 보정이 끝났습니다. 곧 본 실험을 시작합니다.", "본 실험에서도 왼쪽: 있음(T), 오른쪽: 없음(F)입니다."], "post_calibration")
+                      ["Calibration is complete. The main test will start shortly.", "Left arrow: T (present)     Right arrow: F (absent)"], "post_calibration")
             for i, stimulus in enumerate(self.main, 1):
                 row = self.trial(stimulus, "main", i, len(self.main))
                 if row["break_after"]:
-                    self.wait(self.cfg.break_seconds, ["절반 이상의 시행을 마쳤습니다. 잠시 쉬세요.", "휴식 종료 2초 전에 재개를 안내하고 자동으로 시작합니다."], "break")
+                    self.wait(self.cfg.break_seconds, ["You have completed at least half of the trials. Take a short break.", "A reminder will appear 2 seconds before the test resumes automatically."], "break")
             self.metadata["status"] = "completed"
-            self.message(["실험을 모두 마쳤습니다. 감사합니다.", "결과는 외부 CSV 파일에 저장되었습니다."])
+            self.message(["The test is complete. Thank you for participating.", "Your results have been saved to a CSV file."])
         except (QuitExperiment, KeyboardInterrupt):
             self.metadata["status"] = "aborted"
         except Exception:

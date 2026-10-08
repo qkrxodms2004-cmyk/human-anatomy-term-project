@@ -1,4 +1,4 @@
-"""Headless integration checks of real Pygame event handling and CSV persistence."""
+"""가상 장치에서 실제 Pygame 입력 처리와 CSV 저장을 검증합니다."""
 import csv
 from collections import Counter
 from dataclasses import replace
@@ -39,7 +39,7 @@ class InterfaceTests(unittest.TestCase):
                     self.assertGreaterEqual(record['end_s'], duration)
                     self.assertLess(record['end_s'], duration + .011)
                     self.assertEqual(len(screens), 2 if duration > 2 else 1)
-                    self.assertIn('본 실험을 다시 시작', screens[-1][1][0])
+                    self.assertIn('main test resumes', screens[-1][1][0])
             finally:
                 task.result_file.close()
                 task.pg.quit()
@@ -49,12 +49,12 @@ class InterfaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             cfg = replace(Settings(), output_dir=folder)
             events = [
-                p.event.Event(p.KEYDOWN, key=p.K_RETURN),  # empty must not confirm
+                p.event.Event(p.KEYDOWN, key=p.K_RETURN),  # 빈 ID는 확정하지 않습니다.
                 p.event.Event(p.TEXTINPUT, text='/'),
-                p.event.Event(p.KEYDOWN, key=p.K_RETURN),  # invalid must not confirm
+                p.event.Event(p.KEYDOWN, key=p.K_RETURN),  # 유효하지 않은 ID는 확정하지 않습니다.
                 p.event.Event(p.KEYDOWN, key=p.K_BACKSPACE),
                 p.event.Event(p.TEXTEDITING, text='P', start=0, length=1),
-                p.event.Event(p.KEYDOWN, key=p.K_RETURN),  # composing must not confirm
+                p.event.Event(p.KEYDOWN, key=p.K_RETURN),  # 문자 조합 중에는 확정하지 않습니다.
                 p.event.Event(p.TEXTINPUT, text='P001X'),
                 p.event.Event(p.KEYDOWN, key=p.K_BACKSPACE),
                 p.event.Event(p.KEYDOWN, key=p.K_RETURN),
@@ -141,6 +141,7 @@ class InterfaceTests(unittest.TestCase):
                           break_seconds=.02, post_calibration_wait_seconds=.02)
             task = Experiment(cfg, 'BALANCED', smoke=True)
             task.message = Mock(wraps=task.message)
+            task.draw = Mock(wraps=task.draw)
             original_setup = task.setup
             def setup():
                 original_setup()
@@ -175,9 +176,12 @@ class InterfaceTests(unittest.TestCase):
             purposes = Counter(w['purpose'] for w in task.metadata['waits'])
             self.assertEqual(purposes['break'], 1)
             self.assertEqual(purposes['post_calibration'], 1)
-            self.assertEqual(task.message.call_count, 4)  # intro, practice feedback, calibration, completion
+            self.assertEqual(task.message.call_count, 4)  # 안내, 연습 피드백, 보정 안내, 종료 안내
             pause = next(w for w in task.metadata['waits'] if w['purpose'] == 'break')
             self.assertNotEqual(pause['announcement_onset_s'], '')
+            for call in task.draw.call_args_list:
+                for line in call.args[0]:
+                    self.assertFalse(any('\uac00' <= char <= '\ud7a3' for char in line), line)
 
     def test_escape_persists_incomplete_trial(self):
         with tempfile.TemporaryDirectory() as folder:
