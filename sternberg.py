@@ -373,16 +373,26 @@ class Experiment:
             self.clock.tick(120)
 
     def wait(self, seconds, lines, purpose="intertrial", row=None):
-        onset = self.draw(lines + ["방향키를 누르지 말고 기다리세요."])
+        announcement = [f"{min(2, seconds):g}초 뒤 본 실험을 다시 시작합니다.",
+                        "왼쪽 ←: T (있음)     오른쪽 →: F (없음)",
+                        "자동으로 시작됩니다. 키를 누르지 말고 준비하세요."]
+        show_immediately = purpose == "break" and seconds <= 2
+        onset = self.draw(announcement if show_immediately else lines + ["방향키를 누르지 말고 기다리세요."])
+        announcement_onset = onset if show_immediately else ""
         if row is not None:
             row["intertrial_onset_s"] = onset
         try:
             while self.now() - onset < seconds:
                 self.events()
+                if purpose == "break" and announcement_onset == "" and self.now() - onset >= seconds - 2:
+                    announcement_onset = self.draw(announcement)
                 self.clock.tick(120)
         finally:
-            self.metadata["waits"].append({"purpose": purpose, "onset_s": onset,
-                                           "end_s": self.now(), "requested_seconds": seconds})
+            record = {"purpose": purpose, "onset_s": onset,
+                      "end_s": self.now(), "requested_seconds": seconds}
+            if purpose == "break":
+                record["announcement_onset_s"] = announcement_onset
+            self.metadata["waits"].append(record)
         return onset
 
     def write_row(self, row):
@@ -479,8 +489,7 @@ class Experiment:
             for i, stimulus in enumerate(self.main, 1):
                 row = self.trial(stimulus, "main", i, len(self.main))
                 if row["break_after"]:
-                    self.wait(self.cfg.break_seconds, ["절반 이상의 시행을 마쳤습니다. 잠시 쉬세요.", "휴식 시간이 끝나면 안내에 따라 재개하세요."], "break")
-                    self.message(["휴식이 끝났습니다.", "왼쪽: 있음(T), 오른쪽: 없음(F)를 기억하세요."])
+                    self.wait(self.cfg.break_seconds, ["절반 이상의 시행을 마쳤습니다. 잠시 쉬세요.", "휴식 종료 2초 전에 재개를 안내하고 자동으로 시작합니다."], "break")
             self.metadata["status"] = "completed"
             self.message(["실험을 모두 마쳤습니다. 감사합니다.", "결과는 외부 CSV 파일에 저장되었습니다."])
         except (QuitExperiment, KeyboardInterrupt):

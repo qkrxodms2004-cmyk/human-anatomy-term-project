@@ -16,6 +16,34 @@ from sternberg import Experiment, QuitExperiment, Settings, main, prompt_partici
 
 
 class InterfaceTests(unittest.TestCase):
+    def test_break_announces_last_two_seconds_without_extending_wait(self):
+        with tempfile.TemporaryDirectory() as folder:
+            task = Experiment(replace(Settings(), output_dir=folder), 'BREAK')
+            try:
+                for duration in (5.0, 2.0, .5):
+                    elapsed = [0.0]
+                    screens = []
+                    task.now = lambda: elapsed[0]
+                    def draw(lines):
+                        screens.append((elapsed[0], lines))
+                        return elapsed[0]
+                    task.draw = draw
+                    task.events = Mock(return_value=[])
+                    task.clock = Mock()
+                    def tick(fps):
+                        elapsed[0] += .01
+                    task.clock.tick.side_effect = tick
+                    task.wait(duration, ['휴식 중'], 'break')
+                    record = task.metadata['waits'][-1]
+                    self.assertAlmostEqual(record['announcement_onset_s'], max(0, duration - 2), delta=.011)
+                    self.assertGreaterEqual(record['end_s'], duration)
+                    self.assertLess(record['end_s'], duration + .011)
+                    self.assertEqual(len(screens), 2 if duration > 2 else 1)
+                    self.assertIn('본 실험을 다시 시작', screens[-1][1][0])
+            finally:
+                task.result_file.close()
+                task.pg.quit()
+
     def test_id_form_edits_and_persists_confirmed_id(self):
         import pygame as p
         with tempfile.TemporaryDirectory() as folder:
@@ -112,6 +140,7 @@ class InterfaceTests(unittest.TestCase):
                           delay_seconds=.02, response_timeout_seconds=.08, intertrial_seconds=.01,
                           break_seconds=.02, post_calibration_wait_seconds=.02)
             task = Experiment(cfg, 'BALANCED', smoke=True)
+            task.message = Mock(wraps=task.message)
             original_setup = task.setup
             def setup():
                 original_setup()
@@ -146,6 +175,9 @@ class InterfaceTests(unittest.TestCase):
             purposes = Counter(w['purpose'] for w in task.metadata['waits'])
             self.assertEqual(purposes['break'], 1)
             self.assertEqual(purposes['post_calibration'], 1)
+            self.assertEqual(task.message.call_count, 4)  # intro, practice feedback, calibration, completion
+            pause = next(w for w in task.metadata['waits'] if w['purpose'] == 'break')
+            self.assertNotEqual(pause['announcement_onset_s'], '')
 
     def test_escape_persists_incomplete_trial(self):
         with tempfile.TemporaryDirectory() as folder:
