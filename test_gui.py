@@ -1,10 +1,12 @@
 """Headless integration checks of real Pygame event handling and CSV persistence."""
 import csv
+from collections import Counter
 from dataclasses import replace
 import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import Mock
 
 os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
 os.environ.setdefault('SDL_AUDIODRIVER', 'dummy')
@@ -32,7 +34,7 @@ class InterfaceTests(unittest.TestCase):
                         return original_events()
                     task.events = events
                     row = task.trial({'set': 'ABCDE', 'probe': 'A', 'noise_stage': stage,
-                                      'noise_filter': 'low', 'noise_loudness': 'quiet'}, 'main', number, 3)
+                                      'noise_filter': 'low', 'noise_condition': 'low_' + stage}, 'main', number, 3)
                     self.assertEqual(row['response'], {task.pg.K_LEFT: 'T', task.pg.K_RIGHT: 'F', None: ''}[answer])
                     self.assertEqual(row['correct'], number == 1)
                     self.assertEqual(row['timeout'], answer is None)
@@ -50,6 +52,48 @@ class InterfaceTests(unittest.TestCase):
             finally:
                 task.result_file.close()
                 task.pg.quit()
+
+    def test_complete_run_balances_conditions_and_keeps_quiet_silent(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cfg = replace(Settings(), output_dir=folder, seed=17, trials_per_condition=2,
+                          calibration_trials=2, practice_trials=1, memorize_seconds=.02,
+                          delay_seconds=.02, response_timeout_seconds=.08, intertrial_seconds=.01,
+                          break_seconds=.02, post_calibration_wait_seconds=.02)
+            task = Experiment(cfg, 'BALANCED', smoke=True)
+            original_setup = task.setup
+            def setup():
+                original_setup()
+                task.audio_channel = Mock(wraps=task.audio_channel)
+            task.setup = setup
+            task.run()
+            self.assertEqual(task.metadata['status'], 'completed')
+            self.assertEqual(task.metadata['main_trial_count'], 14)
+            with (task.folder / 'trials.csv').open(encoding='utf-8-sig') as f:
+                rows = list(csv.DictReader(f))
+            main = [r for r in rows if r['phase'] == 'main']
+            counts = Counter(r['noise_condition'] for r in main)
+            self.assertEqual(len(counts), 7)
+            self.assertEqual(set(counts.values()), {2})
+            self.assertEqual(task.audio_channel.play.call_count, 12)
+            for row in main:
+                self.assertEqual(row['status'], 'completed')
+                if row['noise_condition'] == 'quiet':
+                    self.assertEqual(row['noise_stage'], 'none')
+                    self.assertEqual(row['noise_filter'], 'none')
+                    self.assertEqual(row['noise_play_command_s'], '')
+                    self.assertEqual(row['noise_stop_command_s'], '')
+                    self.assertEqual(row['noise_target_rms'], '0')
+                    self.assertEqual(row['noise_command_duration_ms'], '0')
+                    self.assertEqual(row['noise_min_hz'], '')
+                else:
+                    self.assertGreater(float(row['noise_command_duration_ms']), 0)
+                    self.assertEqual(float(row['noise_min_hz']), getattr(cfg, row['noise_filter'] + '_min_hz'))
+                    self.assertEqual(float(row['noise_max_hz']), getattr(cfg, row['noise_filter'] + '_max_hz'))
+            self.assertEqual([r['trial'] for r in main if r['break_after'] == 'True'], ['7'])
+            self.assertEqual(task.metadata['calibration_valid_responses'], 2)
+            purposes = Counter(w['purpose'] for w in task.metadata['waits'])
+            self.assertEqual(purposes['break'], 1)
+            self.assertEqual(purposes['post_calibration'], 1)
 
     def test_escape_persists_incomplete_trial(self):
         with tempfile.TemporaryDirectory() as folder:

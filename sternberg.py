@@ -27,7 +27,7 @@ class Settings:
     memorize_seconds: float = 2.0
     delay_seconds: float = 2.0
     response_timeout_seconds: float = 3.0
-    trials: int = 24
+    trials_per_condition: int = 4
     calibration_trials: int = 10
     practice_trials: int = 3
     break_seconds: float = 30.0
@@ -37,14 +37,19 @@ class Settings:
     output_dir: str = "results"
     seed: int = 0
     sample_rate: int = 44100
-    low_cutoff_hz: float = 1000.0
-    high_cutoff_hz: float = 4000.0
-    quiet_rms: float = .025
-    loud_rms: float = .05
+    low_min_hz: float = 20.0
+    low_max_hz: float = 1000.0
+    high_min_hz: float = 4000.0
+    high_max_hz: float = 12000.0
+    noise_rms: float = .05
     fullscreen: bool = False
     width: int = 1100
     height: int = 750
     font_file: str = ""
+
+    @property
+    def trials(self) -> int:
+        return 7 * self.trials_per_condition
 
 
 def load_settings(path: Path) -> Settings:
@@ -52,9 +57,14 @@ def load_settings(path: Path) -> Settings:
     if not parser.read(path, encoding="utf-8-sig"):
         raise ValueError(f"설정 파일을 찾을 수 없습니다: {path}")
     cfg = Settings()
+    if parser.has_option("experiment", "trials"):
+        raise ValueError("기존 trials 대신 trials_per_condition에 조건당 시행 수 n을 설정하세요. 총 시행 수는 7n입니다.")
+    if any(parser.has_option("audio", name) for name in
+           ("low_cutoff_hz", "high_cutoff_hz", "quiet_rms", "loud_rms")):
+        raise ValueError("기존 오디오 설정을 low_min_hz/low_max_hz, high_min_hz/high_max_hz, noise_rms로 바꿔 주세요.")
     for section, names in {
         "experiment": list(asdict(cfg))[:13],
-        "audio": ["sample_rate", "low_cutoff_hz", "high_cutoff_hz", "quiet_rms", "loud_rms"],
+        "audio": ["sample_rate", "low_min_hz", "low_max_hz", "high_min_hz", "high_max_hz", "noise_rms"],
         "display": ["fullscreen", "width", "height", "font_file"],
     }.items():
         if section not in parser:
@@ -86,7 +96,7 @@ def load_settings(path: Path) -> Settings:
 def validate_settings(c: Settings) -> None:
     if not 1 <= c.set_size <= 25:
         raise ValueError("set_size는 1~25여야 합니다 (불일치 probe 생성에 한 글자 필요).")
-    for name in ("trials", "calibration_trials", "practice_trials"):
+    for name in ("trials_per_condition", "calibration_trials", "practice_trials"):
         if getattr(c, name) < 1:
             raise ValueError(f"{name}은 1 이상이어야 합니다.")
     for name in ("memorize_seconds", "delay_seconds", "response_timeout_seconds",
@@ -96,10 +106,10 @@ def validate_settings(c: Settings) -> None:
             raise ValueError(f"{name}은 유한한 양수여야 합니다.")
     if c.sample_rate not in (22050, 44100, 48000):
         raise ValueError("sample_rate는 22050, 44100, 48000 중 하나여야 합니다.")
-    if not 0 < c.low_cutoff_hz < c.high_cutoff_hz < c.sample_rate / 2:
-        raise ValueError("필터 경계는 0 < low < high < Nyquist여야 합니다.")
-    if not (0 < c.quiet_rms < c.loud_rms <= .15):
-        raise ValueError("음량은 0 < quiet_rms < loud_rms <= 0.15여야 합니다.")
+    if not 0 <= c.low_min_hz < c.low_max_hz < c.high_min_hz < c.high_max_hz <= c.sample_rate / 2:
+        raise ValueError("주파수 범위는 0 <= low_min < low_max < high_min < high_max <= sample_rate/2여야 합니다.")
+    if not (0 < c.noise_rms <= .15):
+        raise ValueError("음량은 0 < noise_rms <= 0.15여야 합니다.")
     if c.width < 800 or c.height < 600:
         raise ValueError("화면 크기는 최소 800 x 600이어야 합니다.")
 
@@ -124,7 +134,7 @@ def read_stimuli(path: str, count: int, size: int) -> list[dict]:
             raise ValueError("자극 CSV에 set,probe 열이 필요합니다.")
         rows = list(reader)
     if len(rows) != count:
-        raise ValueError(f"자극 CSV 행 수({len(rows)})는 trials({count})와 같아야 합니다.")
+        raise ValueError(f"자극 CSV 행 수({len(rows)})는 총 시행 수 7n({count})과 같아야 합니다.")
     result = []
     for index, row in enumerate(rows, 2):
         letters = "".join(row["set"].split())
@@ -137,18 +147,20 @@ def read_stimuli(path: str, count: int, size: int) -> list[dict]:
     return result
 
 
-def noise_conditions(count: int, rng: random.Random) -> list[dict]:
-    pool = [{"noise_stage": s, "noise_filter": f, "noise_loudness": v}
-            for s in STAGES for f in ("low", "high") for v in ("quiet", "loud")]
-    result = []
-    while len(result) < count:
-        block = pool.copy()
-        rng.shuffle(block)
-        result.extend(block[:count - len(result)])
+def noise_conditions(repetitions: int, rng: random.Random) -> list[dict]:
+    if repetitions < 1:
+        raise ValueError("조건당 시행 수는 1 이상이어야 합니다.")
+    pool = [{"noise_condition": f"{f}_{s}", "noise_stage": s, "noise_filter": f}
+            for s in STAGES for f in ("low", "high")]
+    pool.append({"noise_condition": "quiet", "noise_stage": "none", "noise_filter": "none"})
+    result = [condition.copy() for condition in pool for _ in range(repetitions)]
+    rng.shuffle(result)
     return result
 
 
-def filtered_noise(c: Settings, kind: str, loudness: str, seed: int) -> np.ndarray:
+def filtered_noise(c: Settings, kind: str, seed: int) -> np.ndarray:
+    if kind not in ("low", "high"):
+        raise ValueError("소음 필터는 low 또는 high여야 합니다.")
     # A long reusable buffer avoids generating audio inside timed trial stages.
     duration = max(c.memorize_seconds, c.delay_seconds, c.response_timeout_seconds) + .1
     if duration > 600:
@@ -157,14 +169,14 @@ def filtered_noise(c: Settings, kind: str, loudness: str, seed: int) -> np.ndarr
     raw = np.random.default_rng(seed).normal(size=n)
     spectrum = np.fft.rfft(raw)
     frequencies = np.fft.rfftfreq(n, 1 / c.sample_rate)
-    mask = ((frequencies > 0) & (frequencies <= c.low_cutoff_hz)
-            if kind == "low" else frequencies >= c.high_cutoff_hz)
+    minimum, maximum = getattr(c, f"{kind}_min_hz"), getattr(c, f"{kind}_max_hz")
+    mask = (frequencies > 0) & (frequencies >= minimum) & (frequencies <= maximum)
     spectrum[~mask] = 0
     wave = np.fft.irfft(spectrum, n)
     rms = np.sqrt(np.mean(wave ** 2))
     if rms == 0:
         raise ValueError("지정한 시간과 필터에서 소음을 만들 수 없습니다.")
-    wave *= getattr(c, f"{loudness}_rms") / rms
+    wave *= c.noise_rms / rms
     if np.max(np.abs(wave)) >= 1:
         raise ValueError("소음 피크가 출력 범위를 초과했습니다. RMS 음량을 줄이세요.")
     mono = np.round(wave * 32767).astype(np.int16)
@@ -173,7 +185,7 @@ def filtered_noise(c: Settings, kind: str, loudness: str, seed: int) -> np.ndarr
 
 FIELDS = ["phase", "trial", "set", "probe", "expected", "response", "correct",
           "response_time_ms", "timeout", "status", "noise_stage", "noise_filter",
-          "noise_loudness", "noise_target_rms", "noise_low_cutoff_hz", "noise_high_cutoff_hz",
+          "noise_condition", "noise_target_rms", "noise_min_hz", "noise_max_hz",
           "noise_play_command_s", "noise_stop_command_s", "noise_command_duration_ms",
           "set_onset_s", "delay_onset_s", "probe_onset_s", "response_time_s",
           "intertrial_onset_s", "trial_end_s", "calibration_mean_ms", "break_after", "timing_json"]
@@ -197,7 +209,7 @@ class Experiment:
         self.practice = make_stimuli(c.practice_trials, c.set_size, rng)
         self.calibration = make_stimuli(c.calibration_trials, c.set_size, rng)
         self.main = read_stimuli(c.stimuli_file, c.trials, c.set_size) if c.stimuli_file else make_stimuli(c.trials, c.set_size, rng)
-        for trial, condition in zip(self.main, noise_conditions(c.trials, rng)):
+        for trial, condition in zip(self.main, noise_conditions(c.trials_per_condition, rng)):
             trial.update(condition)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
         safe = "".join(x for x in participant if x.isalnum() or x in "-_")[:60]
@@ -206,11 +218,12 @@ class Experiment:
         self.folder = Path(c.output_dir) / (f"SMOKE_{safe}_{stamp}" if smoke else f"{safe}_{stamp}")
         self.folder.mkdir(parents=True, exist_ok=False)
         self.metadata = {"participant": safe, "started_utc": stamp, "settings": asdict(c),
+                         "main_trial_count": c.trials,
                          "smoke_test": smoke, "status": "initializing", "audio_hashes": {}, "waits": [],
                          "timing_note": "perf_counter times relative to session start; flip / audio command timestamps, not measured physical onsets"}
         self.save_metadata()
         with (self.folder / "planned_stimuli.csv").open("w", encoding="utf-8-sig", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["phase", "trial", "set", "probe", "noise_stage", "noise_filter", "noise_loudness"])
+            writer = csv.DictWriter(f, fieldnames=["phase", "trial", "set", "probe", "noise_condition", "noise_stage", "noise_filter"])
             writer.writeheader()
             for phase, rows in (("practice", self.practice), ("calibration", self.calibration), ("main", self.main)):
                 for index, row in enumerate(rows, 1):
@@ -247,10 +260,10 @@ class Experiment:
         self.font_path = font_path
         self.sounds = {}
         self.audio_channel = p.mixer.Channel(0)
-        for index, (kind, level) in enumerate(( (f, v) for f in ("low", "high") for v in ("quiet", "loud"))):
-            data = filtered_noise(c, kind, level, (c.seed + index + 1) % 2**32)
-            self.metadata["audio_hashes"][f"{kind}_{level}"] = hashlib.sha256(data.tobytes()).hexdigest()
-            self.sounds[(kind, level)] = p.sndarray.make_sound(data)
+        for index, kind in enumerate(("low", "high")):
+            data = filtered_noise(c, kind, (c.seed + index + 1) % 2**32)
+            self.metadata["audio_hashes"][kind] = hashlib.sha256(data.tobytes()).hexdigest()
+            self.sounds[kind] = p.sndarray.make_sound(data)
         self.metadata.update(status="running", display_font=font_path, audio_driver=p.mixer.get_init())
         self.save_metadata()
 
@@ -323,7 +336,7 @@ class Experiment:
         row[f"{name}_onset_s"] = onset
         if row["noise_stage"] == name:
             row["noise_play_command_s"] = self.now()
-            self.audio_channel.play(self.sounds[(row["noise_filter"], row["noise_loudness"])])
+            self.audio_channel.play(self.sounds[row["noise_filter"]])
         response, rt = "", ""
         while True:
             for event in self.events():
@@ -352,8 +365,12 @@ class Experiment:
                    expected="T" if stimulus["probe"] in stimulus["set"] else "F",
                    calibration_mean_ms=self.calibration_mean)
         if phase == "main":
-            row.update(noise_target_rms=getattr(c, f'{row["noise_loudness"]}_rms'),
-                       noise_low_cutoff_hz=c.low_cutoff_hz, noise_high_cutoff_hz=c.high_cutoff_hz)
+            if row["noise_condition"] == "quiet":
+                row.update(noise_target_rms=0, noise_command_duration_ms=0)
+            else:
+                row.update(noise_target_rms=c.noise_rms,
+                           noise_min_hz=getattr(c, f'{row["noise_filter"]}_min_hz'),
+                           noise_max_hz=getattr(c, f'{row["noise_filter"]}_max_hz'))
         self.active_row = row
         label = {"practice": "연습", "calibration": "반응시간 보정", "main": "본 실험"}[phase]
         header = f"{label}  {number} / {count}"
@@ -378,7 +395,7 @@ class Experiment:
     def run(self):
         try:
             self.setup()
-            self.message(["Sternberg 기억 실험 안내", "1. 처음 나타나는 대문자 set을 기억합니다.", "2. set이 사라지면 +를 보며 계속 기억합니다.", "3. 한 글자(probe)가 나타나면 set에 있었는지 판단합니다.", "왼쪽 ←: T (있음)     오른쪽 →: F (없음)", "응답에는 시간 제한이 있습니다. 빠르고 정확하게 답하세요.", "4. 다음 시행까지 기다립니다. 본 실험 중에는 소음이 들립니다.", "먼저 연습하고, 소음 없이 반응시간을 보정합니다."])
+            self.message(["Sternberg 기억 실험 안내", "1. 처음 나타나는 대문자 set을 기억합니다.", "2. set이 사라지면 +를 보며 계속 기억합니다.", "3. 한 글자(probe)가 나타나면 set에 있었는지 판단합니다.", "왼쪽 ←: T (있음)     오른쪽 →: F (없음)", "응답에는 시간 제한이 있습니다. 빠르고 정확하게 답하세요.", "4. 다음 시행까지 기다립니다. 소음이 없는 시행도 있습니다.", "먼저 연습하고, 소음 없이 반응시간을 보정합니다."])
             for i, stimulus in enumerate(self.practice, 1):
                 self.trial(stimulus, "practice", i, len(self.practice))
             self.message(["반응시간 보정", "연습과 같은 방식으로 빠르고 정확하게 답하세요.", "정답 응답의 평균 반응시간을 계산합니다. 소음은 없습니다."])
@@ -426,7 +443,7 @@ def main():
     args = parser.parse_args()
     cfg = load_settings(args.config.resolve())
     if args.smoke_test:
-        cfg.trials, cfg.calibration_trials, cfg.practice_trials = 4, 2, 1
+        cfg.trials_per_condition, cfg.calibration_trials, cfg.practice_trials = 1, 2, 1
         cfg.stimuli_file = ""
         for name in ("memorize_seconds", "delay_seconds", "response_timeout_seconds", "break_seconds",
                      "post_calibration_wait_seconds", "intertrial_seconds"):
