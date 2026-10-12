@@ -12,10 +12,41 @@ os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
 os.environ.setdefault('SDL_AUDIODRIVER', 'dummy')
 os.environ.setdefault('PYGAME_HIDE_SUPPORT_PROMPT', '1')
 
-from sternberg import Experiment, QuitExperiment, Settings, main, prompt_participant
+from sternberg import Experiment, QuitExperiment, Settings, main, prompt_participant, resize_display
 
 
 class InterfaceTests(unittest.TestCase):
+    def test_resize_redraws_probe_without_resetting_onset(self):
+        with tempfile.TemporaryDirectory() as folder:
+            task = Experiment(replace(Settings(), output_dir=folder), 'RESIZE')
+            try:
+                task.setup()
+                row = {'noise_stage': 'none', 'expected': 'T'}
+                onsets = []
+                original_draw = task.draw
+                def draw(*args):
+                    onset = original_draw(*args)
+                    onsets.append(onset)
+                    return onset
+                task.draw = draw
+                resize = task.pg.event.Event(task.pg.VIDEORESIZE, w=900, h=650)
+                answer = task.pg.event.Event(task.pg.KEYDOWN, key=task.pg.K_LEFT)
+                with patch('pygame.event.get', side_effect=[[], [resize], [answer]]):
+                    response, rt = task.stage('probe', .5, ['Test'], 'B', row)
+                self.assertEqual(task.screen.get_size(), (900, 650))
+                self.assertEqual(response, 'T')
+                self.assertGreater(rt, 0)
+                self.assertEqual(len(onsets), 2)
+                self.assertEqual(row['probe_onset_s'], onsets[0])
+                self.assertEqual(task.last_frame, (['Test'], 'B'))
+                small = task.pg.event.Event(task.pg.VIDEORESIZE, w=300, h=200)
+                screen = resize_display(task.pg, small, task.cfg)
+                self.assertEqual(screen.get_size(), (800, 600))
+                self.assertIsNone(resize_display(task.pg, resize, replace(task.cfg, fullscreen=True)))
+            finally:
+                task.result_file.close()
+                task.pg.quit()
+
     def test_break_announces_last_two_seconds_without_extending_wait(self):
         with tempfile.TemporaryDirectory() as folder:
             task = Experiment(replace(Settings(), output_dir=folder), 'BREAK')
@@ -113,7 +144,7 @@ class InterfaceTests(unittest.TestCase):
                             sent[0] = True
                         return original_events()
                     task.events = events
-                    row = task.trial({'set': 'ABCDE', 'probe': 'A', 'noise_stage': stage,
+                    row = task.trial({'set': 'BCDFG', 'probe': 'B', 'noise_stage': stage,
                                       'noise_filter': 'low', 'noise_condition': 'low_' + stage}, 'main', number, 3)
                     self.assertEqual(row['response'], {task.pg.K_LEFT: 'T', task.pg.K_RIGHT: 'F', None: ''}[answer])
                     self.assertEqual(row['correct'], number == 1)

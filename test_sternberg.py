@@ -26,6 +26,7 @@ class TaskTests(unittest.TestCase):
         for row in rows:
             self.assertEqual(len(set(row['set'])), 5)
             self.assertTrue(row['set'].isupper())
+            self.assertFalse(set(row['set'] + row['probe']) & set('AEIOU'))
         self.assertEqual(rows, make_stimuli(24, 5, random.Random(42)))
 
     def test_noise_assignment_covers_seven_conditions_equally(self):
@@ -61,18 +62,20 @@ class TaskTests(unittest.TestCase):
     def test_external_csv_and_reject_invalid_sets(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'stimuli.csv'
-            path.write_text('set,probe\nABCDE,A\nFGHIJ,Z\n', encoding='utf-8-sig')
+            path.write_text('set,probe\nBCDFG,B\nHJKLM,Z\n', encoding='utf-8-sig')
             self.assertEqual(read_stimuli(str(path), 2, 5)[1]['probe'], 'Z')
             with self.assertRaises(ValueError):
                 read_stimuli(str(path), 3, 5)
-            path.write_text('set,probe\nAABCD,A\n', encoding='utf-8')
-            with self.assertRaises(ValueError):
-                read_stimuli(str(path), 1, 5)
+            for row in ('BBCDF,B', 'ABCDE,B', 'BCDFG,A'):
+                path.write_text('set,probe\n' + row + '\n', encoding='utf-8')
+                with self.assertRaises(ValueError):
+                    read_stimuli(str(path), 1, 5)
 
     def test_settings_paths_and_invalid_values(self):
         cfg = load_settings(Path(__file__).with_name('config.ini'))
         self.assertTrue(Path(cfg.output_dir).is_absolute())
-        for overrides in ({'set_size': 26}, {'trials_per_condition': 0}, {'delay_seconds': -1},
+        validate_settings(replace(cfg, set_size=20))
+        for overrides in ({'set_size': 21}, {'trials_per_condition': 0}, {'delay_seconds': -1},
                           {'noise_rms': .2}, {'high_max_hz': 30000}, {'break_seconds': float('nan')},
                           {'low_min_hz': -1}, {'low_max_hz': 20}, {'high_min_hz': 500},
                           {'high_max_hz': float('nan')}):

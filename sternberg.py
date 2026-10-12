@@ -22,6 +22,7 @@ configure_vendor()
 import numpy as np
 
 STAGES = ("set", "delay", "probe")
+ALPHABET = "".join(letter for letter in string.ascii_uppercase if letter not in "AEIOU")
 
 
 @dataclass
@@ -97,8 +98,8 @@ def load_settings(path: Path) -> Settings:
 
 
 def validate_settings(c: Settings) -> None:
-    if not 1 <= c.set_size <= 25:
-        raise ValueError("set_size는 1~25여야 합니다 (불일치 probe 생성에 한 글자 필요).")
+    if not 1 <= c.set_size < len(ALPHABET):
+        raise ValueError("set_size는 1~20이어야 합니다 (자음 21개 중 불일치 probe용 한 글자 필요).")
     for name in ("trials_per_condition", "calibration_trials", "practice_trials"):
         if getattr(c, name) < 1:
             raise ValueError(f"{name}은 1 이상이어야 합니다.")
@@ -124,8 +125,8 @@ def make_stimuli(count: int, size: int, rng: random.Random) -> list[dict]:
     rng.shuffle(targets)
     result = []
     for present in targets:
-        letters = rng.sample(string.ascii_uppercase, size)
-        probe = rng.choice(letters if present else [x for x in string.ascii_uppercase if x not in letters])
+        letters = rng.sample(ALPHABET, size)
+        probe = rng.choice(letters if present else [x for x in ALPHABET if x not in letters])
         result.append({"set": "".join(letters), "probe": probe})
     return result
 
@@ -143,9 +144,9 @@ def read_stimuli(path: str, count: int, size: int) -> list[dict]:
         letters = "".join(row["set"].split())
         probe = row["probe"].strip()
         if (len(letters) != size or len(set(letters)) != size
-                or any(x not in string.ascii_uppercase for x in letters)
-                or len(probe) != 1 or probe not in string.ascii_uppercase):
-            raise ValueError(f"자극 CSV {index}행: 중복 없는 대문자 set({size}개), 대문자 probe(1개)가 필요합니다.")
+                or any(x not in ALPHABET for x in letters)
+                or len(probe) != 1 or probe not in ALPHABET):
+            raise ValueError(f"자극 CSV {index}행: 모음(A/E/I/O/U)을 제외한 중복 없는 대문자 set({size}개), 자음 probe(1개)가 필요합니다.")
         result.append({"set": letters, "probe": probe})
     return result
 
@@ -209,13 +210,20 @@ def validate_participant(value: str) -> str:
 def setup_display(p, c):
     p.display.init()
     p.font.init()
-    screen = p.display.set_mode((c.width, c.height), p.FULLSCREEN if c.fullscreen else 0)
+    screen = p.display.set_mode((c.width, c.height), p.FULLSCREEN if c.fullscreen else p.RESIZABLE)
     p.display.set_caption("Sternberg Memory Test")
     fonts = ["malgungothic", "applesdgothicneo", "nanumgothic", "notosanscjkkr", "notosanscjksc"]
     font_path = c.font_file or next((p.font.match_font(x) for x in fonts if p.font.match_font(x)), None)
     if not font_path:
         raise RuntimeError("한글 글꼴이 없습니다. config.ini의 font_file에 한글 TTF/OTF 경로를 지정하세요.")
     return screen, font_path
+
+
+def resize_display(p, event, c):
+    # 기존 화면 최소 크기를 유지하고 전체 화면 모드에서는 크기 변경을 무시합니다.
+    if event.type == p.VIDEORESIZE and not c.fullscreen:
+        return p.display.set_mode((max(800, event.w), max(600, event.h)), p.RESIZABLE)
+    return None
 
 
 def prompt_participant(c: Settings) -> str | None:
@@ -230,6 +238,8 @@ def prompt_participant(c: Settings) -> str | None:
         box = p.Rect(50, 220, screen.get_width() - 100, 65)
         p.key.set_text_input_rect(box)
         while True:
+            box.width = screen.get_width() - 100
+            p.key.set_text_input_rect(box)
             screen.fill((18, 22, 30))
             lines = [("Enter your participant ID", 65),
                      ("Use an anonymous ID, not your real name. Example: P001", 120),
@@ -250,6 +260,9 @@ def prompt_participant(c: Settings) -> str | None:
             screen.blit(rendered, (box.x + 12, box.y + (box.height - rendered.get_height()) // 2))
             p.display.flip()
             for event in p.event.get():
+                resized = resize_display(p, event, c)
+                if resized is not None:
+                    screen = resized
                 if event.type == p.QUIT or (event.type == p.KEYDOWN and event.key == p.K_ESCAPE):
                     return None
                 if event.type == p.TEXTINPUT:
@@ -282,6 +295,7 @@ class Experiment:
         self.calibration_mean = ""
         self.clock = pygame.time.Clock()
         self.audio_channel = None
+        self.last_frame = None
         rng = random.Random(c.seed)
         self.practice = make_stimuli(c.practice_trials, c.set_size, rng)
         self.calibration = make_stimuli(c.calibration_trials, c.set_size, rng)
@@ -339,6 +353,7 @@ class Experiment:
 
     def draw(self, lines, large=""):
         p = self.pg
+        self.last_frame = (list(lines), large)
         self.screen.fill((18, 22, 30))
         y = 65
         for line in lines:
@@ -349,7 +364,7 @@ class Experiment:
             self.screen.blit(rendered, (self.screen.get_width() // 2 - rendered.get_width() // 2, y))
             y += 45
         if large:
-            # 최소 화면 크기에서도 set_size=25를 표시하도록 긴 set을 줄바꿈합니다.
+            # 최소 화면 크기에서도 긴 자음 set을 표시하도록 줄바꿈합니다.
             chunks = [large[i:i+23] for i in range(0, len(large), 23)]
             for i, chunk in enumerate(chunks):
                 rendered = self.big_font.render(chunk, True, (255, 220, 110))
@@ -360,6 +375,12 @@ class Experiment:
     def events(self):
         events = self.pg.event.get()
         for event in events:
+            resized = resize_display(self.pg, event, self.cfg)
+            if resized is not None:
+                self.screen = resized
+                if self.last_frame is not None:
+                    # 화면만 다시 그립니다. 시행 시각이나 소음 재생은 다시 시작하지 않습니다.
+                    self.draw(*self.last_frame)
             if event.type == self.pg.QUIT or (event.type == self.pg.KEYDOWN and event.key == self.pg.K_ESCAPE):
                 raise QuitExperiment()
         return events
